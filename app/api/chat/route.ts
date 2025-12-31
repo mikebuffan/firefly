@@ -112,3 +112,5 @@ export async function POST(req: Request) {
     assistantText,
   });
 }
+
+export const dynamic = "force-dynamic";
