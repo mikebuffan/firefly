@@ -7,41 +7,59 @@ import { analyzeCues } from "@/lib/cues";
 import { buildNextMove } from "@/lib/flow";
 import { buildSystemPrompt } from "@/lib/promptBuilder";
 import { generateWithOpenAI } from "@/lib/providers/openai";
+import { createClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const BodySchema = z.object({
-  userId: z.string().min(1),
   conversationId: z.string().uuid(),
   userText: z.string().min(1),
 });
 
+function supabaseFromAuthHeader(req: Request) {
+  const url = process.env.SUPABASE_URL!;
+  const anon = process.env.SUPABASE_ANON_KEY!;
+  const authHeader = req.headers.get("authorization") || "";
+
+  return createClient(url, anon, {
+    auth: { persistSession: false },
+    global: { headers: { Authorization: authHeader } },
+  });
+}
+
+async function requireUserId(req: Request) {
+  const supa = supabaseFromAuthHeader(req);
+  const { data, error } = await supa.auth.getUser();
+  if (error || !data?.user) throw new Error("Unauthorized");
+  return data.user.id; // <-- this becomes your canonical userId
+}
+
 // This should create the conversation row if you have a conversations table.
 // If you *don’t* have a conversations table, delete this function and its call.
-async function ensureConversation(db: ReturnType<typeof supabaseAdmin>, userId: string, conversationId: string) {
+async function ensureConversation(db: ReturnType<typeof supabaseAdmin>, authedUserId: string, conversationId: string) {
   const { error } = await db.from("conversations").upsert(
-    { id: conversationId, user_id: userId },
+    { id: conversationId, user_id: authedUserId },
     { onConflict: "id" }
   );
   if (error) throw error;
 }
 
-async function getUserProfile(db: ReturnType<typeof supabaseAdmin>, userId: string) {
+async function getUserProfile(db: ReturnType<typeof supabaseAdmin>, authedUserId: string) {
   const { data, error } = await db
     .from("user_profile")
     .select("*")
-    .eq("user_id", userId)
+    .eq("user_id", authedUserId)
     .maybeSingle();
   if (error) throw error;
   return data;
 }
 
-async function getMemory(db: ReturnType<typeof supabaseAdmin>, userId: string) {
+async function getMemory(db: ReturnType<typeof supabaseAdmin>, authedUserId: string) {
   const { data, error } = await db
     .from("memory_items")
     .select("*")
-    .eq("user_id", userId)
+    .eq("user_id", authedUserId)
     .order("weight", { ascending: false })
     .limit(12);
 
@@ -55,16 +73,39 @@ async function getMemory(db: ReturnType<typeof supabaseAdmin>, userId: string) {
 }
 
 export async function POST(req: Request) {
-  const parsed = BodySchema.safeParse(await req.json());
-  if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
-  }
+  const authedUserId = await requireUserId(req);
 
-  const { userId, conversationId, userText } = parsed.data;
+  const parsed = BodySchema.safeParse(await req.json().catch(() => null));
+  if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+
+  const { conversationId, userText } = parsed.data;
+  const userId = authedUserId;
+
   const db = supabaseAdmin();
 
+  const gate = await requireActiveSubscription(db, authedUserId);
+  if (!gate.ok) return NextResponse.json({ error: "Subscription required" }, { status: 402 });
+
+  async function requireActiveSubscription(
+    db: ReturnType<typeof supabaseAdmin>,
+    authedUserId: string
+  ) {
+    const { data, error } = await db
+      .from("billing_subscriptions")
+      .select("status, current_period_end")
+      .eq("user_id", authedUserId)
+      .maybeSingle();
+
+    if (error) throw error;
+
+    const active = data?.status === "active" || data?.status === "trialing";
+    if (!active) return { ok: false as const, reason: data?.status ?? "none" };
+
+    return { ok: true as const };
+  }
+
   // 1) Ensure conversation exists (optional, only if you have conversations table)
-  await ensureConversation(db, userId, conversationId);
+  await ensureConversation(db, authedUserId, conversationId);
 
   // 2) Store USER message
   const { error: userInsertErr } = await db.from("messages").insert({
@@ -77,11 +118,11 @@ export async function POST(req: Request) {
   }
 
   // 3) Build response
-  const profile = await getUserProfile(db, userId);
+  const profile = await getUserProfile(db, authedUserId);
   const persona = PERSONAS[(profile?.persona_variant || "arbor_masc") as keyof typeof PERSONAS];
 
   const cues = analyzeCues(userText);
-  const memory = await getMemory(db, userId);
+  const memory = await getMemory(db, authedUserId);
 
   const systemPrompt = buildSystemPrompt(persona, memory.memoryFacts);
   const nextMove = buildNextMove({
@@ -116,6 +157,8 @@ export async function POST(req: Request) {
   if (assistantInsertErr) {
     return NextResponse.json({ error: assistantInsertErr.message }, { status: 500 });
   }
+
+  await db.rpc("bump_usage_turn", { p_user_id: authedUserId  });
 
   // 6) Return response to client
   return NextResponse.json({
