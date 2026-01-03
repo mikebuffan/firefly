@@ -1,10 +1,24 @@
 import { NextResponse } from "next/server";
 import { stripe } from "@/lib/stripe";
 import { supabaseAdmin } from "@/lib/supabaseServer";
-import Stripe from "stripe";
+import type Stripe from "stripe";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+function getCustomerId(sub: any): string | null {
+  const c = sub?.customer;
+  if (!c) return null;
+  if (typeof c === "string") return c;
+  if (typeof c === "object" && typeof c.id === "string") return c.id;
+  return null;
+}
+
+function getCurrentPeriodEnd(sub: any): number | null {
+  // Stripe uses current_period_end (unix seconds) on most subscription objects
+  const v = sub?.current_period_end;
+  return typeof v === "number" ? v : null;
+}
 
 export async function POST(req: Request) {
   const sig = req.headers.get("stripe-signature");
@@ -20,17 +34,22 @@ export async function POST(req: Request) {
       process.env.STRIPE_WEBHOOK_SECRET!
     );
   } catch (err: any) {
-    return NextResponse.json({ error: `Webhook signature verification failed: ${err?.message}` }, { status: 400 });
+    return NextResponse.json(
+      { error: `Webhook signature verification failed: ${err?.message}` },
+      { status: 400 }
+    );
   }
 
   const db = supabaseAdmin();
 
-  // Handle the minimum set for subscriptions
   if (event.type === "checkout.session.completed") {
     const session = event.data.object as Stripe.Checkout.Session;
 
-    const authedUserId = session.client_reference_id; // we set this in checkout route
-    const customerId = session.customer as string;
+    const authedUserId = session.client_reference_id ?? null; // you set this in checkout route
+    const customerId =
+      typeof session.customer === "string"
+        ? session.customer
+        : session.customer?.id ?? null;
 
     if (authedUserId && customerId) {
       await db.from("billing_customers").upsert({
@@ -40,28 +59,37 @@ export async function POST(req: Request) {
         updated_at: new Date().toISOString(),
       });
     }
+
+    return NextResponse.json({ received: true });
   }
 
-//const subsription = await
-//stripe.subscriptions.retrieve(subId);
+  if (
+    event.type === "customer.subscription.updated" ||
+    event.type === "customer.subscription.deleted"
+  ) {
+    // IMPORTANT: don't rely on Stripe TS type shape here
+    const sub: any = event.data.object;
 
+    const customerId = getCustomerId(sub);
+    const periodEnd = getCurrentPeriodEnd(sub);
 
- if (event.type === "customer.subscription.updated" || event.type === "customer.subscription.deleted") {
-  const sub = event.data.object as Stripe.Subscription;
-  const customerId = sub.customer as string;
+    if (customerId) {
+      await db
+        .from("billing_customers")
+        .update({
+          subscription_status: sub?.status ?? null,
+          price_id: sub?.items?.data?.[0]?.price?.id ?? null,
+          current_period_end: periodEnd
+            ? new Date(periodEnd * 1000).toISOString()
+            : null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("stripe_customer_id", customerId);
+    }
 
-  await db
-    .from("billing_customers")
-    .update({
-      subscription_status: sub.status,
-      price_id: sub.items.data[0]?.price?.id ?? null,
-      current_period_end: (sub as any).current_period_end
-        ? new Date(((sub as any).current_period_end as number) * 1000).toISOString()
-        : null,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("stripe_customer_id", customerId);
+    return NextResponse.json({ received: true });
   }
 
+  // Ignore all other event types for now
   return NextResponse.json({ received: true });
 }
