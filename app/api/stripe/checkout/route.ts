@@ -1,28 +1,42 @@
+// app/api/stripe/checkout/route.ts
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { stripe } from "@/lib/stripe";
+import { stripe } from "@/lib/stripe"; // wherever you init Stripe
+import { supabaseFromAuthHeader } from "@/lib/supabaseFromAuthHeader"; // your helper
 
 export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
 
 const BodySchema = z.object({
-  userId: z.string().min(1), // later this should come from Supabase auth session, not client input
   priceId: z.string().min(1),
 });
 
-export async function POST(req: Request) {
-  const parsed = BodySchema.safeParse(await req.json());
-  if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+async function requireUserId(req: Request) {
+  const supa = supabaseFromAuthHeader(req);
+  const { data, error } = await supa.auth.getUser();
+  if (error || !data?.user) throw new Error("Unauthorized");
+  return data.user.id;
+}
 
-  const { authedUserId, priceId } = parsed.data;
+export async function POST(req: Request) {
+  let authedUserId: string;
+  try {
+    authedUserId = await requireUserId(req);
+  } catch {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const parsed = BodySchema.safeParse(await req.json());
+  if (!parsed.success) {
+    return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+  }
+
+  const { priceId } = parsed.data;
 
   const session = await stripe.checkout.sessions.create({
     mode: "subscription",
-    success_url: `${process.env.APP_URL}/billing/success?session_id={CHECKOUT_SESSION_ID}`,
-    cancel_url: `${process.env.APP_URL}/billing/cancel`,
     line_items: [{ price: priceId, quantity: 1 }],
-    client_reference_id: authedUserId, // we’ll use this in webhook to map back to user
-    allow_promotion_codes: true,
+    // NOTE: also include success/cancel urls etc. (keeping short here)
+    metadata: { userId: authedUserId },
   });
 
   return NextResponse.json({ url: session.url });
