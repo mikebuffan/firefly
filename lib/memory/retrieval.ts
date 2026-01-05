@@ -19,7 +19,7 @@ export async function getMemoryContext(params: {
   const { authedUserId, latestUserText } = params;
   const queryEmbedding = await embedText(latestUserText);
 
-  const { data: primary, error: e1 } = await supabaseAdmin.rpc("match_memory_kv_items", {
+  const { data: primary, error: e1 } = await supabaseAdmin().rpc("match_memory_items", {
     p_user_id: authedUserId,
     p_query_embedding: queryEmbedding,
     p_match_count: 18,
@@ -30,7 +30,7 @@ export async function getMemoryContext(params: {
 
   let sensitive: any[] = [];
   if (userTriggeredSensitive(latestUserText)) {
-    const { data, error: e2 } = await supabaseAdmin.rpc("match_memory_kv_items", {
+    const { data, error: e2 } = await supabaseAdmin().rpc("match_memory_items", {
       p_user_id: authedUserId,
       p_query_embedding: queryEmbedding,
       p_match_count: 8,

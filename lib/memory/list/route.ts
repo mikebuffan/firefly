@@ -5,8 +5,9 @@ import { supabaseAdmin } from "@/lib/supabase/admin";
 export async function GET() {
   const authedUserId = await requireUserId();
 
-  const { data, error } = await supabaseAdmin
-    .from("memory_kv_items")
+  const admin = supabaseAdmin();
+  const { data, error } = await admin
+    .from("memory _items")
     .select("key,value,tier,user_trigger_only,importance,confidence,locked,correction_count,last_seen_at,mention_count")
     .eq("user_id", authedUserId)
     .order("importance", { ascending: false });

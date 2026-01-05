@@ -3,19 +3,20 @@ import { LOCK_ON_CORRECTION_COUNT } from "@/lib/memory/rules";
 import type { MemoryItem, MemoryUpsertResult } from "@/lib/memory/types";
 import { embedText, memoryToEmbedString } from "@/lib/memory/embeddings";
 
-const ITEMS_TABLE = "memory_kv_items";
-const EVENTS_TABLE = "memory_kv_events";
+const ITEMS_TABLE = "memory_items";
+const EVENTS_TABLE = "memory_pending";
 
 export async function upsertMemoryItems(
   authedUserId: string,
   items: MemoryItem[]
 ): Promise<MemoryUpsertResult> {
+  const admin = supabaseAdmin(); // ✅
   const result: MemoryUpsertResult = { created: [], updated: [], locked: [], ignored: [] };
 
   for (const item of items) {
     const key = item.key.trim();
 
-    const { data: existing, error: exErr } = await supabaseAdmin
+    const { data: existing, error: exErr } = await admin
       .from(ITEMS_TABLE)
       .select("*")
       .eq("user_id", authedUserId)
@@ -26,7 +27,7 @@ export async function upsertMemoryItems(
     const embedding = await embedText(memoryToEmbedString(key, item.value));
 
     if (!existing) {
-      const { error: insErr } = await supabaseAdmin.from(ITEMS_TABLE).insert({
+      const { error: insErr } = await admin.from(ITEMS_TABLE).insert({
         user_id: authedUserId,
         key,
         value: item.value,
@@ -40,7 +41,7 @@ export async function upsertMemoryItems(
       });
       if (insErr) throw insErr;
 
-      await supabaseAdmin.from(EVENTS_TABLE).insert({
+      await admin.from(EVENTS_TABLE).insert({
         user_id: authedUserId,
         memory_key: key,
         event_type: "create",
@@ -52,7 +53,7 @@ export async function upsertMemoryItems(
     }
 
     if (existing.locked) {
-      await supabaseAdmin
+      await admin
         .from(ITEMS_TABLE)
         .update({
           last_seen_at: new Date().toISOString(),
@@ -67,7 +68,7 @@ export async function upsertMemoryItems(
 
     const mergedValue = { ...(existing.value ?? {}), ...(item.value ?? {}) };
 
-    const { error: updErr } = await supabaseAdmin
+    const { error: updErr } = await admin
       .from(ITEMS_TABLE)
       .update({
         value: mergedValue,
@@ -83,7 +84,7 @@ export async function upsertMemoryItems(
       .eq("id", existing.id);
     if (updErr) throw updErr;
 
-    await supabaseAdmin.from(EVENTS_TABLE).insert({
+    await admin.from(EVENTS_TABLE).insert({
       user_id: authedUserId,
       memory_key: key,
       event_type: "update",
@@ -102,9 +103,10 @@ export async function correctMemoryItem(params: {
   newValue: Record<string, any>;
   projectId?: string | null;
 }) {
+  const admin = supabaseAdmin(); // ✅
   const { authedUserId, key, newValue } = params;
 
-  const { data: existing, error } = await supabaseAdmin
+  const { data: existing, error } = await admin
     .from(ITEMS_TABLE)
     .select("*")
     .eq("user_id", authedUserId)
@@ -115,7 +117,7 @@ export async function correctMemoryItem(params: {
   const embedding = await embedText(memoryToEmbedString(key, newValue));
 
   if (!existing) {
-    await supabaseAdmin.from(ITEMS_TABLE).insert({
+    await admin.from(ITEMS_TABLE).insert({
       user_id: authedUserId,
       key,
       value: newValue,
@@ -129,7 +131,7 @@ export async function correctMemoryItem(params: {
       embedding,
     });
 
-    await supabaseAdmin.from(EVENTS_TABLE).insert({
+    await admin.from(EVENTS_TABLE).insert({
       user_id: authedUserId,
       memory_key: key,
       event_type: "correct",
@@ -142,7 +144,7 @@ export async function correctMemoryItem(params: {
   const nextCorrectionCount = (existing.correction_count ?? 0) + 1;
   const shouldLock = nextCorrectionCount >= LOCK_ON_CORRECTION_COUNT;
 
-  await supabaseAdmin
+  await admin
     .from(ITEMS_TABLE)
     .update({
       value: newValue,
@@ -156,7 +158,7 @@ export async function correctMemoryItem(params: {
     })
     .eq("id", existing.id);
 
-  await supabaseAdmin.from(EVENTS_TABLE).insert({
+  await admin.from(EVENTS_TABLE).insert({
     user_id: authedUserId,
     memory_key: key,
     event_type: shouldLock ? "lock" : "correct",
@@ -167,11 +169,12 @@ export async function correctMemoryItem(params: {
 }
 
 export async function reinforceMemoryUse(authedUserId: string, keysUsed: string[]) {
+  const admin = supabaseAdmin(); // ✅
   if (!keysUsed.length) return;
   const now = new Date().toISOString();
 
   for (const key of keysUsed) {
-    const { data: row } = await supabaseAdmin
+    const { data: row } = await admin
       .from(ITEMS_TABLE)
       .select("id,confidence,mention_count")
       .eq("user_id", authedUserId)
@@ -182,7 +185,7 @@ export async function reinforceMemoryUse(authedUserId: string, keysUsed: string[
 
     const nextConfidence = Math.min(1, Number(row.confidence ?? 0.7) + 0.03);
 
-    await supabaseAdmin
+    await admin
       .from(ITEMS_TABLE)
       .update({
         confidence: nextConfidence,
@@ -192,7 +195,7 @@ export async function reinforceMemoryUse(authedUserId: string, keysUsed: string[
       })
       .eq("id", row.id);
 
-    await supabaseAdmin.from(EVENTS_TABLE).insert({
+    await admin.from(EVENTS_TABLE).insert({
       user_id: authedUserId,
       memory_key: key,
       event_type: "update",

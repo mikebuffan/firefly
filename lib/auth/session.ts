@@ -18,7 +18,8 @@ export async function getOrCreateUserId(): Promise<string> {
     maxAge: 60 * 60 * 24 * 365,
   });
 
-  await supabaseAdmin.from("app_users").insert({ id: userId });
+  const admin = supabaseAdmin();
+  await admin.from("app_users").insert({ id: userId });
   return userId;
 }
 

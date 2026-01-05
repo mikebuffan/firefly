@@ -3,6 +3,9 @@ import { supabaseFromAuthHeader } from "@/lib/supabase/bearer";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { MemoryService } from "@/lib/memory/memoryService";
 
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
 export async function PATCH(
   req: NextRequest,
   context: { params: Promise<{ id: string }> }
@@ -15,7 +18,7 @@ export async function PATCH(
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
-  const body = await req.json();
+  const body = await req.json().catch(() => ({} as any));
   const url = new URL(req.url);
   const projectId = url.searchParams.get("projectId") ?? body.projectId ?? null;
 

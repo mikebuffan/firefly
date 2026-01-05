@@ -1,8 +1,8 @@
-import type { MemoryItem } from "@/lib/memory/memoryService";
+import type { MemoryItemRow } from "@/lib/memory/memoryService";
 import { selectItemsForPrompt } from "@/lib/memory/selectForPrompt";
 
 export function buildPromptContext(args: {
-  allItems: MemoryItem[];
+  allItems: MemoryItemRow[];
   userText: string;
   decayMs: number;
 }) {
@@ -11,9 +11,10 @@ export function buildPromptContext(args: {
 
   // 1) Apply decay (does NOT delete)
   const decayed = allItems.filter((i) => {
-    if (i.discarded) return false;
-    if (i.pinned || i.locked) return true;
-    const t = new Date(i.last_mentioned_at).getTime();
+    if (i.discarded_at) return false;
+    if (i.pinned || i.is_locked) return true;
+
+    const t = new Date(i.last_reinforced_at ?? i.updated_at).getTime();
     return now - t <= decayMs;
   });
 

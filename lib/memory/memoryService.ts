@@ -15,8 +15,8 @@ export type MemoryItemRow = {
   correction_count: number;
   is_locked: boolean;
   repair_flag: boolean;
-
-  // NEW columns we will add:
+  updated_at: string;
+  last_reinforced_at: string | null;
   pinned: boolean;
   discarded_at: string | null;
   confirmed_at: string | null;
