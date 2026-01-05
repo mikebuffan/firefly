@@ -20,11 +20,14 @@ export async function POST(req: Request) {
   }
 
   const { supabaseAdmin } = await import("@/lib/supabase/admin");
-  const { data, error } = await supabaseAdmin
+  const admin = supabaseAdmin();
+
+  const { data, error } = await admin
     .from("billing_customers")
     .select("stripe_customer_id")
     .eq("user_id", authedUserId)
     .maybeSingle();
+
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   if (!data?.stripe_customer_id) {
