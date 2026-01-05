@@ -22,15 +22,15 @@ export type MemoryItemRow = {
   confirmed_at: string | null;
 };
 
+export type MemoryDeps = {
+  supabase: SupabaseClient;  // bearer (RLS reads)
+  admin: SupabaseClient;     // service role writes when needed
+  userId: string;            // authed user
+  projectId: string | null;  // scope
+};
+
 export class MemoryService {
-  constructor(
-    private deps: {
-      supabase: SupabaseClient; // bearer: auth + read (RLS)
-      admin: SupabaseClient;   // service role: writes (bypass RLS if needed)
-      userId: string;
-      projectId: string | null;
-    }
-  ) {}
+  constructor(private deps: MemoryDeps) {}
 
   private baseQuery() {
     return this.deps.admin
