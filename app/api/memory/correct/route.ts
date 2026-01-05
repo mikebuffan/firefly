@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { supabaseFromAuthHeader } from "@/lib/supabase/bearer";
 import { supabaseAdmin } from "@/lib/supabase/admin";
-import { applyMemoryOps } from "@/lib/memory/service";
+import { MemoryService } from "@/lib/memory/memoryService";
 import { toMemValue } from "@/lib/memory/value";
 
 const Body = z.object({
@@ -47,10 +47,12 @@ export async function POST(req: Request) {
   };
 
   const admin = supabaseAdmin();
-  const touchedIds = await applyMemoryOps(
-    { admin, authedUserId: userId, projectId },
-    [op]
-  );
+  const svc = new MemoryService({
+    supabase,
+    admin,
+    userId,
+    projectId,
+  });
 
-  return NextResponse.json({ ok: true, touchedIds });
+  return NextResponse.json({ ok: true, svc });
 }

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { supabaseFromAuthHeader } from "@/lib/supabase/bearer";
 import { supabaseAdmin } from "@/lib/supabase/admin";
-import { applyMemoryOps } from "@/lib/memory/service";
+import { MemoryService } from "@/lib/memory/memoryService";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -59,20 +59,22 @@ export async function POST(req: NextRequest) {
 
   // 4) Apply or discard
   let appliedIds: string[] = [];
+
   if (decision === "yes") {
     const ops = (pending.ops ?? []) as any[];
+
+    // if your schema requires confidence for CORRECT, add it here
     const boosted = ops.map((o: any) => ({
       ...o,
       op: "CORRECT",
-      confidence: 1,
+      confidence: o.confidence ?? 1,
     }));
 
-    // Use service-role for writes if applyMemoryOps expects admin privileges
-    const admin = supabaseAdmin();    
-    appliedIds = await applyMemoryOps(
-      { admin: admin, authedUserId: userId, projectId },
-      boosted
-    );
+    const admin = supabaseAdmin();
+    const svc = new MemoryService({ supabase, admin, userId, projectId });
+
+    // IMPORTANT: call the service and capture ids
+    appliedIds = await svc.applyOps(boosted);
   }
 
   // 5) Delete pending row
@@ -81,5 +83,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: dErr.message }, { status: 500 });
   }
 
-  return NextResponse.json({ ok: true, applied: decision === "yes", appliedIds });
+  return NextResponse.json({
+    ok: true,
+    applied: decision === "yes",
+    appliedIds,
+  });
 }
