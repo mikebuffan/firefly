@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 import { randomUUID } from "crypto";
-import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 
 const COOKIE_NAME = "ff_uid";
 

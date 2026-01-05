@@ -1,4 +1,4 @@
-import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 import { embedText } from "@/lib/memory/embeddings";
 
 function userTriggeredSensitive(latestUserText: string) {

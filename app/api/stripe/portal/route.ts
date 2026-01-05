@@ -19,7 +19,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { supabaseAdmin } = await import("@/lib/supabaseAdmin");
+  const { supabaseAdmin } = await import("@/lib/supabase/admin");
   const { data, error } = await supabaseAdmin
     .from("billing_customers")
     .select("stripe_customer_id")
