@@ -1,4 +1,4 @@
-import type { PersonaConfig } from "./persona";
+import type { PersonaConfig } from "@/lib/persona";
 
 export function buildSystemPrompt(persona: PersonaConfig, memoryFacts: string[]) {
   return [

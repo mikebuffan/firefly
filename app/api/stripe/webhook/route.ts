@@ -6,33 +6,6 @@ import type Stripe from "stripe";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function getCustomerId(sub: any): string | null {
-  const c = sub?.customer;
-  if (!c) return null;
-  if (typeof c === "string") return c;
-  if (typeof c === "object" && typeof c.id === "string") return c.id;
-  return null;
-}
-
-function getCurrentPeriodEnd(sub: Stripe.Subscription): number | null {
-  // Prefer subscription-level if present (some API versions/types)
-  const anySub = sub as any;
-
-  const subLevel = typeof anySub.current_period_end === "number"
-    ? anySub.current_period_end
-    : null;
-
-  if (subLevel) return subLevel;
-
-  // Fallback: subscription item level (documented)
-  const itemLevel =
-    typeof sub.items?.data?.[0]?.current_period_end === "number"
-      ? sub.items.data[0].current_period_end
-      : null;
-
-  return itemLevel ?? null;
-}
-
 export async function POST(req: Request) {
   const sig = req.headers.get("stripe-signature");
   if (!sig) return NextResponse.json({ error: "Missing stripe-signature" }, { status: 400 });
@@ -41,11 +14,7 @@ export async function POST(req: Request) {
 
   let event: Stripe.Event;
   try {
-    event = stripe.webhooks.constructEvent(
-      rawBody,
-      sig,
-      process.env.STRIPE_WEBHOOK_SECRET!
-    );
+    event = stripe.webhooks.constructEvent(rawBody, sig, process.env.STRIPE_WEBHOOK_SECRET!);
   } catch (err: any) {
     return NextResponse.json(
       { error: `Webhook signature verification failed: ${err?.message}` },
@@ -53,24 +22,26 @@ export async function POST(req: Request) {
     );
   }
 
-  const subscription = event.data.object as Stripe.Subscription;
-  const currentPeriodEnd = getCurrentPeriodEnd(subscription);
   const db = supabaseAdmin();
 
   if (event.type === "checkout.session.completed") {
     const session = event.data.object as Stripe.Checkout.Session;
 
-    const authedUserId = session.client_reference_id ?? null; // you set this in checkout route
+    const authedUserId =
+      (typeof session.client_reference_id === "string" && session.client_reference_id) ||
+      (typeof session.metadata?.userId === "string" && session.metadata.userId) ||
+      null;
+
     const customerId =
-      typeof session.customer === "string"
-        ? session.customer
-        : session.customer?.id ?? null;
+      typeof session.customer === "string" ? session.customer : session.customer?.id ?? null;
 
     if (authedUserId && customerId) {
       await db.from("billing_customers").upsert({
         user_id: authedUserId,
         stripe_customer_id: customerId,
         subscription_status: "active",
+        price_id: null,
+        current_period_end: null,
         updated_at: new Date().toISOString(),
       });
     }
@@ -83,10 +54,8 @@ export async function POST(req: Request) {
     event.type === "customer.subscription.deleted"
   ) {
     const sub = event.data.object as Stripe.Subscription;
-
     const customerId = sub.customer as string;
 
-    // Stripe typing mismatch happens across versions/events — don't let TS block deploy.
     const currentPeriodEnd = (sub as any).current_period_end as number | undefined;
 
     await db
@@ -100,8 +69,9 @@ export async function POST(req: Request) {
         updated_at: new Date().toISOString(),
       })
       .eq("stripe_customer_id", customerId);
+
+    return NextResponse.json({ received: true });
   }
 
-  // Ignore all other event types for now
   return NextResponse.json({ received: true });
 }

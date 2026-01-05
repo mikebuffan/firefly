@@ -7,16 +7,16 @@ export async function POST(req: Request) {
     const { data, error } = await supa.auth.getUser();
     if (error || !data?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    const userId = data.user.id;
+    const authedUserId = data.user.id;
 
     // wipe prefs + working + summaries
-    const a = await supa.from("user_prefs").delete().eq("user_id", userId);
+    const a = await supa.from("user_prefs").delete().eq("user_id", authedUserId);
     if (a.error) throw a.error;
 
-    const b = await supa.from("user_working_context").delete().eq("user_id", userId);
+    const b = await supa.from("user_working_context").delete().eq("user_id", authedUserId);
     if (b.error) throw b.error;
 
-    const c = await supa.from("user_memory_summaries").delete().eq("user_id", userId);
+    const c = await supa.from("user_memory_summaries").delete().eq("user_id", authedUserId);
     if (c.error) throw c.error;
 
     return NextResponse.json({ ok: true }, { status: 200 });

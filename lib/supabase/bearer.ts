@@ -1,6 +1,6 @@
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
-export function supabaseFromAuthHeader(req: Request) {
+export function supabaseFromAuthHeader(req: Request): SupabaseClient {
   const authHeader = req.headers.get("authorization");
   if (!authHeader) throw new Error("Missing Authorization header");
   if (!authHeader.toLowerCase().startsWith("bearer ")) {
@@ -10,8 +10,6 @@ export function supabaseFromAuthHeader(req: Request) {
   return createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      global: { headers: { Authorization: authHeader } },
-    }
+    { global: { headers: { Authorization: authHeader } } }
   );
 }
