@@ -1,12 +1,14 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { supabaseFromAuthHeader } from "@/lib/supabaseFromAuthHeader";
+//import { supabaseFromAuthHeader } from "@/lib/supabaseFromAuthHeader";
 import { openai } from "@/lib/providers/openai";
 
 import { getMemoryContext } from "@/lib/memory/retrieval";
 import { buildPromptContext } from "@/lib/prompt/buildPromptContext";
 import { extractMemoryFromText } from "@/lib/memory/extractor";
 import { upsertMemoryItems, reinforceMemoryUse } from "@/lib/memory/store";
+
+import { requireUser } from "@/lib/auth/session";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -19,14 +21,15 @@ const Body = z.object({
   userText: z.string().min(1),
 });
 
-async function requireUser(req: Request) {
-  const supabase = supabaseFromAuthHeader(req);
+const { userId } = await requireUser();
+//async function requireUser(req: Request) {
+  //const supabase = supabaseFromAuthHeader(req);
 
-  const { data, error } = await supabase.auth.getUser();
-  if (error || !data?.user) throw new Error("Unauthorized");
+  //const { data, error } = await supabase.auth.getUser();
+  //if (error || !data?.user) throw new Error("Unauthorized");
 
-  return { supabase, userId: data.user.id };
-}
+  //return { supabase, userId: data.user.id };
+//}
 
 async function getOrCreateDefaultProjectId(supabase: any, userId: string): Promise<string> {
   const { data: existing, error: e1 } = await supabase
@@ -121,7 +124,8 @@ async function cleanupExpiredMessagesBestEffort(supabase: any, userId: string) {
 
 export async function POST(req: Request) {
   try {
-    const { supabase, userId } = await requireUser(req);
+    //const { supabase, userId } = await requireUser(req);
+    const { supabase, userId } = await requireUser();
 
     const parsed = Body.safeParse(await req.json().catch(() => ({})));
     if (!parsed.success) {
