@@ -11,7 +11,7 @@ export default function DebugChatPage() {
     setLoading(true);
     setReply("");
     try {
-      const res = await fetch("/api/debug/chat", {
+      const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: msg }),
