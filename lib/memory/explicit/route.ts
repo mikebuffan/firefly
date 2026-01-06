@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { requireUserId } from "@/lib/auth/session";
+import { requireUser } from "@/lib/auth/session";
 import { upsertMemoryItems } from "@/lib/memory/store";
 
 const Item = z.object({
@@ -17,7 +17,7 @@ const Body = z.object({
 });
 
 export async function POST(req: Request) {
-  const authedUserId = await requireUserId();
+  const { userId: authedUserId } = await requireUser();
   const body = await req.json();
   const parsed = Body.safeParse(body);
   if (!parsed.success) return NextResponse.json({ ok: false, error: "Bad request" }, { status: 400 });

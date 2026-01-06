@@ -10,7 +10,7 @@ export async function upsertMemoryItems(
   authedUserId: string,
   items: MemoryItem[]
 ): Promise<MemoryUpsertResult> {
-  const admin = supabaseAdmin(); // ✅
+  const admin = supabaseAdmin(); 
   const result: MemoryUpsertResult = { created: [], updated: [], locked: [], ignored: [] };
 
   for (const item of items) {

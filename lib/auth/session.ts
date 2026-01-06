@@ -34,7 +34,7 @@ export async function requireUser(): Promise<{
   if (process.env.NODE_ENV === "development" && !uid) {
     return {
       userId: "dev-user",
-      supabase: supabaseAdmin(), // ✅ CALL IT
+      supabase: supabaseAdmin(), 
     };
   }
 
@@ -42,7 +42,7 @@ export async function requireUser(): Promise<{
 
   return {
     userId,
-    supabase: supabaseAdmin(), // ✅ CALL IT
+    supabase: supabaseAdmin(), 
   };
 }
 
