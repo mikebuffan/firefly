@@ -35,7 +35,6 @@ export async function POST(req: NextRequest) {
     // If you already use Responses API elsewhere, we can swap to that next.
     const resp = await client.chat.completions.create({
       model: model ?? process.env.OPENAI_MODEL ?? "gpt-5",
-      temperature: 0.2,
       messages: [
         ...(system ? [{ role: "system" as const, content: system }] : []),
         { role: "user", content: message },
