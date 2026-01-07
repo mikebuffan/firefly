@@ -215,7 +215,7 @@ export async function POST(req: Request) {
     await reinforceMemoryUse(userId, mem.keysUsed, projectId);
 
     // Touch conversation updated_at
-    await supabase
+    await supabase  
       .from("conversations")
       .update({ updated_at: new Date().toISOString() })
       .eq("id", convoId)

@@ -3,9 +3,18 @@ import { openai } from "@/lib/providers/openai";
 import { SENSITIVE_CATEGORIES } from "./rules";
 import type { MemoryItem } from "./types";
 
+const MemoryValueSchema = z.union([
+  z.string(),
+  z.number(),
+  z.boolean(),
+  z.record(z.string(), z.any()),
+  z.array(z.any()),
+  z.null(),
+]);
+
 const MemoryItemSchema = z.object({
   key: z.string().min(3),
-  value: z.record(z.string(),z.any()),
+  value: MemoryValueSchema,
   tier: z.enum(["core", "normal", "sensitive"]),
   user_trigger_only: z.boolean(),
   importance: z.number().int().min(1).max(10),
@@ -37,7 +46,7 @@ Key naming:
 - boundaries.<topic>
 - projects.<name>
 - user.<field>
-Return JSON only.
+Return JSON only with shape: {"items":[...]}.
 `.trim();
 
   const user = `
@@ -50,7 +59,8 @@ Return JSON only.
 
   const model = process.env.OPENAI_CHAT_MODEL ?? "gpt-5";
   const resp = await openai.chat.completions.create({
-  model,
+    model,
+    response_format: { type: "json_object" },
     messages: [
       { role: "system", content: system },
       { role: "user", content: user },
@@ -59,19 +69,39 @@ Return JSON only.
 
   const raw = resp.choices[0]?.message?.content ?? "{}";
 
+  function normalizeValueToRecord(
+    key: string,
+    value: unknown
+  ): Record<string, any> {
+    // already an object (and not an array)
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      return value as Record<string, any>;
+    }
+
+    // normalize primitives/arrays/null into a standard shape
+    return { value };
+  }
+
   let parsed: z.infer<typeof ExtractionSchema>;
   try {
     parsed = ExtractionSchema.parse(JSON.parse(raw));
-  } catch {
+  } catch (e) {
+    // TEMP DEBUG (keep until stable)
+    console.warn("Memory extraction parse failed. raw=", raw);
     return [];
   }
 
   return parsed.items.map((it) => {
     const lk = it.key.toLowerCase();
     const isSensitive = SENSITIVE_CATEGORIES.some((c) => lk.includes(c));
-    if (isSensitive || it.tier === "sensitive") {
-      return { ...it, tier: "sensitive", user_trigger_only: true };
-    }
-    return it;
+
+    const normalized: MemoryItem = {
+      ...it,
+      value: normalizeValueToRecord(it.key, it.value),
+      tier: isSensitive || it.tier === "sensitive" ? "sensitive" : it.tier,
+      user_trigger_only: isSensitive || it.tier === "sensitive" ? true : it.user_trigger_only,
+    };
+
+    return normalized;
   });
 }
