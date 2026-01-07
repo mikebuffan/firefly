@@ -159,6 +159,7 @@ export async function POST(req: Request) {
 
     const mem = await getMemoryContext({
       authedUserId: userId,
+      projectId,
       latestUserText: userText,
     });
 

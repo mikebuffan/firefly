@@ -1,53 +1,49 @@
 import { supabaseAdmin } from "@/lib/supabase/admin";
-import { embedText } from "@/lib/memory/embeddings";
-
-function userTriggeredSensitive(latestUserText: string) {
-  const t = latestUserText.toLowerCase();
-  return (
-    t.includes("remember when") ||
-    t.includes("remember that") ||
-    t.includes("like i told you") ||
-    t.includes("as i said before") ||
-    t.includes("you know i have")
-  );
-}
 
 export async function getMemoryContext(params: {
   authedUserId: string;
+  projectId?: string | null;
   latestUserText: string;
 }) {
-  const { authedUserId, latestUserText } = params;
-  const queryEmbedding = await embedText(latestUserText);
+  const { authedUserId, projectId } = params;
+  const admin = supabaseAdmin();
 
-  const { data: primary, error: e1 } = await supabaseAdmin().rpc("match_memory_items", {
-    p_user_id: authedUserId,
-    p_query_embedding: queryEmbedding,
-    p_match_count: 18,
-    p_tiers: ["core", "normal"],
-    p_include_user_trigger_only: false,
-  });
-  if (e1) throw e1;
+  const q = admin
+    .from("memory_items")
+    .select(
+      "id, user_id, project_id, mem_key, mem_value, display_text, reveal_policy, strength, is_locked, pinned, discarded_at, confirmed_at, last_reinforced_at"
+    )
+    .eq("user_id", authedUserId)
+    .is("discarded_at", null)
+    .order("pinned", { ascending: false })
+    .order("strength", { ascending: false })
+    .order("last_reinforced_at", { ascending: false })
+    .limit(50);
 
-  let sensitive: any[] = [];
-  if (userTriggeredSensitive(latestUserText)) {
-    const { data, error: e2 } = await supabaseAdmin().rpc("match_memory_items", {
-      p_user_id: authedUserId,
-      p_query_embedding: queryEmbedding,
-      p_match_count: 8,
-      p_tiers: ["sensitive"],
-      p_include_user_trigger_only: true,
-    });
-    if (e2) throw e2;
-    sensitive = data ?? [];
-  }
+  // If you want per-project memory, keep this:
+  const { data, error } = projectId ? await q.eq("project_id", projectId) : await q;
 
-  const core = (primary ?? []).filter((m: any) => m.tier === "core");
-  const normal = (primary ?? []).filter((m: any) => m.tier === "normal");
+  if (error) throw error;
+
+  // Convert your schema -> the format buildPromptContext expects
+  const items = (data ?? []).map((r: any) => ({
+    key: r.mem_key,
+    value: r.mem_value,           // still text; OK for now
+    display_text: avoidingNull(r.display_text, r.mem_key, r.mem_value),
+    reveal_policy: r.reveal_policy,
+    pinned: r.pinned,
+    strength: Number(r.strength ?? 1),
+    locked: !!r.is_locked,
+  }));
 
   return {
-    core,
-    normal,
-    sensitive,
-    keysUsed: [...(primary ?? []), ...sensitive].map((m: any) => m.key),
+    core: items.filter((i) => i.pinned),
+    normal: items.filter((i) => !i.pinned && i.reveal_policy === "normal"),
+    sensitive: items.filter((i) => i.reveal_policy === "user_trigger_only"),
+    keysUsed: [], // you can fill this later
   };
+}
+
+function avoidingNull(display: any, key: string, val: string) {
+  return display ?? `${key}: ${val}`;
 }
