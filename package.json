@@ -9,12 +9,15 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@sentry/nextjs": "^10.32.1",
+    "@supabase/ssr": "^0.8.0",
     "@supabase/supabase-js": "^2.89.0",
     "next": "16.1.0",
     "openai": "^6.15.0",
     "react": "19.2.3",
     "react-dom": "19.2.3",
-    "stripe": "^20.1.0",
+    "stripe": "^20.1.1",
+    "yaml": "^2.8.2",
     "zod": "^4.2.1"
   },
   "devDependencies": {

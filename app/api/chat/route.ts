@@ -1,174 +1,221 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-
-import { supabaseAdmin } from "@/lib/supabaseServer";
-import { PERSONAS } from "@/lib/persona";
-import { analyzeCues } from "@/lib/cues";
-import { buildNextMove } from "@/lib/flow";
-import { buildSystemPrompt } from "@/lib/promptBuilder";
-import { generateWithOpenAI } from "@/lib/providers/openai";
-import { createClient } from "@supabase/supabase-js";
+import { requireUser } from "@/lib/auth/requireUser";
+import { openAIChat } from "@/lib/providers/openai";
+import { getMemoryContext } from "@/lib/memory/retrieval";
+import { buildPromptContext } from "@/lib/prompt/buildPromptContext";
+import { extractMemoryFromText } from "@/lib/memory/extractor";
+import { upsertMemoryItems, reinforceMemoryUse, updateMemoryStrength } from "@/lib/memory/store";
+import { postcheckResponse } from "@/lib/safety/postcheck";
+import { logMemoryEvent } from "@/lib/memory/logger";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const BodySchema = z.object({
-  conversationId: z.string().uuid(),
+type Msg = { role: "user" | "assistant" | "system"; content: string };
+
+const NullableUuid = z.preprocess(
+  (v) => (v === null || v === "" ? undefined : v),
+  z.string().uuid().optional()
+);
+
+const Body = z.object({
+  projectId: NullableUuid,
+  conversationId: NullableUuid,
   userText: z.string().min(1),
 });
 
-function supabaseFromAuthHeader(req: Request) {
-  const url = process.env.SUPABASE_URL!;
-  const anon = process.env.SUPABASE_ANON_KEY!;
-  const authHeader = req.headers.get("authorization") || "";
-
-  return createClient(url, anon, {
-    auth: { persistSession: false },
-    global: { headers: { Authorization: authHeader } },
-  });
-}
-
-async function requireUserId(req: Request) {
-  const supa = supabaseFromAuthHeader(req);
-  const { data, error } = await supa.auth.getUser();
-  if (error || !data?.user) throw new Error("Unauthorized");
-  return data.user.id; // <-- this becomes your canonical userId
-}
-
-// This should create the conversation row if you have a conversations table.
-// If you *don’t* have a conversations table, delete this function and its call.
-async function ensureConversation(db: ReturnType<typeof supabaseAdmin>, authedUserId: string, conversationId: string) {
-  const { error } = await db.from("conversations").upsert(
-    { id: conversationId, user_id: authedUserId },
-    { onConflict: "id" }
-  );
-  if (error) throw error;
-}
-
-async function getUserProfile(db: ReturnType<typeof supabaseAdmin>, authedUserId: string) {
-  const { data, error } = await db
-    .from("user_profile")
-    .select("*")
-    .eq("user_id", authedUserId)
+async function getOrCreateDefaultProjectId(supabase: any, userId: string): Promise<string> {
+  const { data: existing, error: e1 } = await supabase
+    .from("projects")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("name", "Default Project")
     .maybeSingle();
-  if (error) throw error;
-  return data;
+
+  if (e1) throw e1;
+  if (existing?.id) return existing.id as string;
+
+  const { data: created, error: e2 } = await supabase
+    .from("projects")
+    .insert({
+      user_id: userId,
+      name: "Default Project",
+      persona_id: "arbor",
+      framework_version: "v1",
+    })
+    .select("id")
+    .single();
+
+  if (e2) throw e2;
+  return created.id as string;
 }
 
-async function getMemory(db: ReturnType<typeof supabaseAdmin>, authedUserId: string) {
-  const { data, error } = await db
-    .from("memory_items")
-    .select("*")
-    .eq("user_id", authedUserId)
-    .order("weight", { ascending: false })
-    .limit(12);
+async function getOrCreateConversation(params: {
+  supabase: any;
+  userId: string;
+  projectId: string;
+  conversationId?: string;
+}) {
+  const { supabase, userId, projectId, conversationId } = params;
+
+  if (conversationId) {
+    const { data, error } = await supabase
+      .from("conversations")
+      .select("id")
+      .eq("id", conversationId)
+      .eq("user_id", userId)
+      .eq("project_id", projectId)
+      .single();
+
+    if (error) throw error;
+    return data.id as string;
+  }
+
+  const { data, error } = await supabase
+    .from("conversations")
+    .insert({
+      user_id: userId,
+      project_id: projectId,
+      title: null,
+    })
+    .select("id")
+    .single();
 
   if (error) throw error;
+  return data.id as string;
+}
 
-  const memoryFacts = (data || []).map((d: any) => `${d.kind}:${d.key}=${d.value}`);
-  const redirectHook = (data || []).find((d: any) => d.kind === "redirect")?.value;
-  const addressAs = (data || []).find((d: any) => d.kind === "preference" && d.key === "address_as")?.value;
+async function loadRecentMessages(
+  supabase: any,
+  userId: string,
+  conversationId: string,
+  limit = 30
+): Promise<Msg[]> {
+  const { data, error } = await supabase
+    .from("messages")
+    .select("role,content,created_at,deleted_at,expires_at")
+    .eq("user_id", userId)
+    .eq("conversation_id", conversationId)
+    .is("deleted_at", null)
+    .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`)
+    .order("created_at", { ascending: true })
+    .limit(limit);
 
-  return { memoryFacts, redirectHook, addressAs };
+  if (error) throw error;
+  return (data ?? []).map((m: any) => ({ role: m.role, content: m.content }));
+}
+
+async function cleanupExpiredMessagesBestEffort(supabase: any, userId: string) {
+  await supabase
+    .from("messages")
+    .delete()
+    .eq("user_id", userId)
+    .lt("expires_at", new Date().toISOString())
+    .not("expires_at", "is", null);
 }
 
 export async function POST(req: Request) {
-  let authedUserId: string;
   try {
-    authedUserId = await requireUserId(req);
-  } catch {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const { supabase, userId } = await requireUser(req);
+    const parsed = Body.safeParse(await req.json().catch(() => ({})));
+    if (!parsed.success) {
+      return NextResponse.json({ ok: false, error: parsed.error.flatten() }, { status: 400 });
+    }
+
+    const { projectId: maybeProjectId, conversationId, userText } = parsed.data;
+    await cleanupExpiredMessagesBestEffort(supabase, userId);
+
+    // 1) Resolve project (persona/framework lives here)
+    const projectId = maybeProjectId ?? (await getOrCreateDefaultProjectId(supabase, userId));
+
+    // 2) Ensure project exists/owned
+    const { data: project, error: pErr } = await supabase
+      .from("projects")
+      .select("id, persona_id, framework_version")
+      .eq("id", projectId)
+      .eq("user_id", userId)
+      .single();
+    if (pErr) {
+      return NextResponse.json({ ok: false, error: "Project not found" }, { status: 404 });
+    }
+
+    // 3) Resolve conversation
+    const convoId = await getOrCreateConversation({ supabase, userId, projectId, conversationId });
+
+    // 4) Persist user message
+    await supabase.from("messages").insert({
+      project_id: projectId,
+      conversation_id: convoId,
+      user_id: userId,
+      role: "user",
+      content: userText,
+    });
+
+    // 5) Build system prompt using new contextual builder
+    const systemPrompt = await buildPromptContext({
+      authedUserId: userId,
+      projectId,
+      conversationId: convoId,
+      latestUserText: userText,
+    });
+
+    const history = await loadRecentMessages(supabase, userId, convoId, 30);
+    const messagesForModel: Msg[] = [{ role: "system", content: systemPrompt }, ...history];
+
+    // 6) Generate assistant reply
+    const aiResponse = await openAIChat({
+      model: process.env.OPENAI_CHAT_MODEL ?? "gpt-5",
+      messages: messagesForModel,
+    });
+    const assistantText = (aiResponse as any)?.choices?.[0]?.message?.content ?? "";
+
+    // 7) Safety & postcheck
+    const postcheck = await postcheckResponse({
+      authedUserId: userId,
+      projectId,
+      assistantText,
+    });
+    if (!postcheck.approved) {
+      return NextResponse.json(
+        { ok: true, assistantText: postcheck.replacement, flagged: true },
+        { status: 200 }
+      );
+    }
+
+    // 8) Persist assistant message
+    await supabase.from("messages").insert({
+      project_id: projectId,
+      conversation_id: convoId,
+      user_id: userId,
+      role: "assistant",
+      content: assistantText,
+    });
+
+    // 9) Memory extraction & reinforcement
+    const extracted = await extractMemoryFromText({ userText, assistantText });
+    await upsertMemoryItems(userId, extracted, projectId);
+    await reinforceMemoryUse(userId, [], projectId);
+    await updateMemoryStrength("conversation", 0.2);
+
+    // 10) Update conversation timestamp
+    await supabase
+      .from("conversations")
+      .update({ updated_at: new Date().toISOString() })
+      .eq("id", convoId)
+      .eq("user_id", userId);
+
+    // 11) Log event
+    await logMemoryEvent("chat_completed", { userId, projectId });
+
+    return NextResponse.json({
+      ok: true,
+      projectId,
+      conversationId: convoId,
+      assistantText,
+    });
+  } catch (err: any) {
+    console.error("chat route error:", err);
+    return NextResponse.json({ ok: false, error: err?.message ?? "server_error" }, { status: 500 });
   }
-
-  const parsed = BodySchema.safeParse(await req.json().catch(() => null));
-  if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
-
-  const { conversationId, userText } = parsed.data;
-  const userId = authedUserId;
-
-  const db = supabaseAdmin();
-
-  const gate = await requireActiveSubscription(db, authedUserId);
-  if (!gate.ok) return NextResponse.json({ error: "Subscription required" }, { status: 402 });
-
-  async function requireActiveSubscription(
-    db: ReturnType<typeof supabaseAdmin>,
-    authedUserId: string
-  ) {
-    const { data, error } = await db
-      .from("billing_subscriptions")
-      .select("status, current_period_end")
-      .eq("user_id", authedUserId)
-      .maybeSingle();
-
-    if (error) throw error;
-
-    const active = data?.status === "active" || data?.status === "trialing";
-    if (!active) return { ok: false as const, reason: data?.status ?? "none" };
-
-    return { ok: true as const };
-  }
-
-  // 1) Ensure conversation exists (optional, only if you have conversations table)
-  await ensureConversation(db, authedUserId, conversationId);
-
-  // 2) Store USER message
-  const { error: userInsertErr } = await db.from("messages").insert({
-    conversation_id: conversationId,
-    role: "user",
-    content: userText,
-  });
-  if (userInsertErr) {
-    return NextResponse.json({ error: userInsertErr.message }, { status: 500 });
-  }
-
-  // 3) Build response
-  const profile = await getUserProfile(db, authedUserId);
-  const persona = PERSONAS[(profile?.persona_variant || "arbor_masc") as keyof typeof PERSONAS];
-
-  const cues = analyzeCues(userText);
-  const memory = await getMemory(db, authedUserId);
-
-  const systemPrompt = buildSystemPrompt(persona, memory.memoryFacts);
-  const nextMove = buildNextMove({
-    persona,
-    cues,
-    memory: {
-      addressAs: memory.addressAs || persona.addressingDefault,
-      redirectHook: memory.redirectHook,
-    },
-  });
-
-  let assistantText = nextMove.prompt;
-
-  // 4) If OpenAI enabled, generate the assistant reply
-  if (process.env.OPENAI_API_KEY) {
-    assistantText = await generateWithOpenAI([
-      { role: "system", content: systemPrompt },
-      { role: "user", content: userText },
-      // optional draft:
-      { role: "assistant", content: nextMove.prompt },
-    ]);
-
-    if (!assistantText) assistantText = "I’m here. Say one sentence about what you want next.";
-  }
-
-  // 5) Store ASSISTANT message
-  const { error: assistantInsertErr } = await db.from("messages").insert({
-    conversation_id: conversationId,
-    role: "assistant",
-    content: assistantText,
-  });
-  if (assistantInsertErr) {
-    return NextResponse.json({ error: assistantInsertErr.message }, { status: 500 });
-  }
-
-  await db.rpc("bump_usage_turn", { p_user_id: authedUserId  });
-
-  // 6) Return response to client
-  return NextResponse.json({
-    cues,
-    nextMoveType: nextMove.type,
-    assistantText,
-  });
 }

@@ -1,5 +1,5 @@
-import type { PersonaConfig } from "./persona";
-import type { CueSignals } from "./cues";
+import type { PersonaConfig } from "@/lib/persona";
+import type { CueSignals } from "@/lib/cues";
 
 export type Memory = {
   addressAs?: string;

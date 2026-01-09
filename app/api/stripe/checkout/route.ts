@@ -1,29 +1,39 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { stripe } from "@/lib/stripe";
+import Stripe from "stripe";
+import { requireUser } from "@/lib/auth/requireUser";
 
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
+  //apiVersion: "2024-06-20",
+});
 
-const BodySchema = z.object({
-  userId: z.string().min(1), // later this should come from Supabase auth session, not client input
+const Body = z.object({
   priceId: z.string().min(1),
 });
 
 export async function POST(req: Request) {
-  const parsed = BodySchema.safeParse(await req.json());
-  if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+  const parsed = Body.safeParse(await req.json().catch(() => ({})));
+  if (!parsed.success) {
+    return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+  }
 
-  const { authedUserId, priceId } = parsed.data;
+  const { userId } = await requireUser(req);
+
+  const { priceId } = parsed.data;
 
   const session = await stripe.checkout.sessions.create({
     mode: "subscription",
-    success_url: `${process.env.APP_URL}/billing/success?session_id={CHECKOUT_SESSION_ID}`,
-    cancel_url: `${process.env.APP_URL}/billing/cancel`,
     line_items: [{ price: priceId, quantity: 1 }],
-    client_reference_id: authedUserId, // we’ll use this in webhook to map back to user
-    allow_promotion_codes: true,
+
+    // If Customer IDs are stored, look up by userId here and set `customer`
+    metadata: { userId },
+    subscription_data: {
+      metadata: { userId },
+    },
+
+    success_url: `${process.env.NEXT_PUBLIC_APP_URL}/billing/success?session_id={CHECKOUT_SESSION_ID}`,
+    cancel_url: `${process.env.NEXT_PUBLIC_APP_URL}/billing/cancel`,
   });
 
-  return NextResponse.json({ url: session.url });
+  return NextResponse.json({ ok: true, url: session.url });
 }

@@ -1,34 +1,43 @@
 import { NextResponse } from "next/server";
-import { z } from "zod";
 import { stripe } from "@/lib/stripe";
-import { supabaseAdmin } from "@/lib/supabaseServer";
+import { supabaseFromAuthHeader } from "@/lib/supabaseFromAuthHeader";
 
 export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
 
-const BodySchema = z.object({ authedUserId: z.string().min(1) });
+async function requireUserId(req: Request) {
+  const supa = supabaseFromAuthHeader(req);
+  const { data, error } = await supa.auth.getUser();
+  if (error || !data?.user) throw new Error("Unauthorized");
+  return data.user.id;
+}
 
 export async function POST(req: Request) {
-  const parsed = BodySchema.safeParse(await req.json());
-  if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+  let authedUserId: string;
+  try {
+    authedUserId = await requireUserId(req);
+  } catch {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
 
-  const db = supabaseAdmin();
-  const { authedUserId } = parsed.data;
+  const { supabaseAdmin } = await import("@/lib/supabase/admin");
+  const admin = supabaseAdmin();
 
-  const { data, error } = await db
+  const { data, error } = await admin
     .from("billing_customers")
     .select("stripe_customer_id")
     .eq("user_id", authedUserId)
     .maybeSingle();
 
-  if (error || !data?.stripe_customer_id) {
-    return NextResponse.json({ error: "No Stripe customer found for this user." }, { status: 400 });
+
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (!data?.stripe_customer_id) {
+    return NextResponse.json({ error: "No customer on file" }, { status: 400 });
   }
 
-  const portal = await stripe.billingPortal.sessions.create({
+  const session = await stripe.billingPortal.sessions.create({
     customer: data.stripe_customer_id,
-    return_url: `${process.env.APP_URL}/account`,
+    return_url: `${process.env.APP_URL}/billing`,
   });
 
-  return NextResponse.json({ url: portal.url });
+  return NextResponse.json({ url: session.url });
 }
