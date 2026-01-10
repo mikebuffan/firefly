@@ -5,9 +5,9 @@ Sentry.init({
   enableLogs: true,
   tracesSampleRate: 1.0, // capture 100% for testing; lower in prod
   integrations: [
-    Sentry.replayIntegration(), // optional: screen replay for frontend
+    //Sentry.replayIntegration(), // optional: screen replay for frontend
     Sentry.consoleLoggingIntegration({ levels: ["error", "warn"] }),
   ],
-  replaysSessionSampleRate: 0.1,
+  //replaysSessionSampleRate: 0.1,
   replaysOnErrorSampleRate: 1.0,
 });
