@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireUser } from "@/lib/auth/requireUser";
 import { openAIChat } from "@/lib/providers/openai";
-import { getMemoryContext } from "@/lib/memory/retrieval";
 import { buildPromptContext } from "@/lib/prompt/buildPromptContext";
 import { extractMemoryFromText } from "@/lib/memory/extractor";
 import { upsertMemoryItems, reinforceMemoryUse, updateMemoryStrength } from "@/lib/memory/store";
@@ -59,7 +58,10 @@ async function getOrCreateConversation(params: {
 }) {
   const { supabase, userId, projectId, conversationId } = params;
 
-  if (conversationId) {
+  // ✅ Defensive check: only use valid UUIDs
+  const isUuid = conversationId && /^[0-9a-fA-F-]{36}$/.test(conversationId);
+
+  if (isUuid) {
     const { data, error } = await supabase
       .from("conversations")
       .select("id")
@@ -68,10 +70,10 @@ async function getOrCreateConversation(params: {
       .eq("project_id", projectId)
       .single();
 
-    if (error) throw error;
-    return data.id as string;
+    if (!error && data?.id) return data.id as string;
   }
 
+  // Otherwise create new
   const { data, error } = await supabase
     .from("conversations")
     .insert({
@@ -119,6 +121,7 @@ export async function POST(req: Request) {
   try {
     const { supabase, userId } = await requireUser(req);
     const parsed = Body.safeParse(await req.json().catch(() => ({})));
+
     if (!parsed.success) {
       return NextResponse.json({ ok: false, error: parsed.error.flatten() }, { status: 400 });
     }
@@ -126,10 +129,10 @@ export async function POST(req: Request) {
     const { projectId: maybeProjectId, conversationId, userText } = parsed.data;
     await cleanupExpiredMessagesBestEffort(supabase, userId);
 
-    // 1) Resolve project (persona/framework lives here)
+    // 1) Resolve project
     const projectId = maybeProjectId ?? (await getOrCreateDefaultProjectId(supabase, userId));
 
-    // 2) Ensure project exists/owned
+    // 2) Ensure project exists
     const { data: project, error: pErr } = await supabase
       .from("projects")
       .select("id, persona_id, framework_version")
@@ -140,10 +143,10 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: "Project not found" }, { status: 404 });
     }
 
-    // 3) Resolve conversation
+    // 3) Get or create conversation safely
     const convoId = await getOrCreateConversation({ supabase, userId, projectId, conversationId });
 
-    // 4) Persist user message
+    // 4) Save user message
     await supabase.from("messages").insert({
       project_id: projectId,
       conversation_id: convoId,
@@ -152,7 +155,7 @@ export async function POST(req: Request) {
       content: userText,
     });
 
-    // 5) Build system prompt using new contextual builder
+    // 5) Build system prompt
     const systemPrompt = await buildPromptContext({
       authedUserId: userId,
       projectId,
@@ -163,14 +166,14 @@ export async function POST(req: Request) {
     const history = await loadRecentMessages(supabase, userId, convoId, 30);
     const messagesForModel: Msg[] = [{ role: "system", content: systemPrompt }, ...history];
 
-    // 6) Generate assistant reply
+    // 6) Generate AI response
     const aiResponse = await openAIChat({
       model: process.env.OPENAI_CHAT_MODEL ?? "gpt-5",
       messages: messagesForModel,
     });
     const assistantText = (aiResponse as any)?.choices?.[0]?.message?.content ?? "";
 
-    // 7) Safety & postcheck
+    // 7) Safety filter
     const postcheck = await postcheckResponse({
       authedUserId: userId,
       projectId,
@@ -183,7 +186,7 @@ export async function POST(req: Request) {
       );
     }
 
-    // 8) Persist assistant message
+    // 8) Save assistant message
     await supabase.from("messages").insert({
       project_id: projectId,
       conversation_id: convoId,
@@ -196,7 +199,9 @@ export async function POST(req: Request) {
     const extracted = await extractMemoryFromText({ userText, assistantText });
     await upsertMemoryItems(userId, extracted, projectId);
     await reinforceMemoryUse(userId, [], projectId);
-    await updateMemoryStrength("conversation", 0.2);
+
+    // ✅ Fix: use actual conversation UUID instead of string
+    await updateMemoryStrength(convoId, 0.2);
 
     // 10) Update conversation timestamp
     await supabase
