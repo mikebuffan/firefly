@@ -24,11 +24,11 @@ const Body = z.object({
   userText: z.string().min(1),
 });
 
-async function getOrCreateDefaultProjectId(supabase: any, userId: string): Promise<string> {
+async function getOrCreateDefaultProjectId(supabase: any, authedUserId: string): Promise<string> {
   const { data: existing, error: e1 } = await supabase
     .from("projects")
     .select("id")
-    .eq("user_id", userId)
+    .eq("user_id", authedUserId)
     .eq("name", "Default Project")
     .maybeSingle();
 
@@ -38,7 +38,7 @@ async function getOrCreateDefaultProjectId(supabase: any, userId: string): Promi
   const { data: created, error: e2 } = await supabase
     .from("projects")
     .insert({
-      user_id: userId,
+      user_id: authedUserId,
       name: "Default Project",
       persona_id: "arbor",
       framework_version: "v1",
@@ -52,11 +52,11 @@ async function getOrCreateDefaultProjectId(supabase: any, userId: string): Promi
 
 async function getOrCreateConversation(params: {
   supabase: any;
-  userId: string;
+  authedUserId: string;
   projectId: string;
   conversationId?: string;
 }) {
-  const { supabase, userId, projectId, conversationId } = params;
+  const { supabase, authedUserId, projectId, conversationId } = params;
 
   // ✅ Defensive check: only use valid UUIDs
   const isUuid = conversationId && /^[0-9a-fA-F-]{36}$/.test(conversationId);
@@ -66,7 +66,7 @@ async function getOrCreateConversation(params: {
       .from("conversations")
       .select("id")
       .eq("id", conversationId)
-      .eq("user_id", userId)
+      .eq("user_id", authedUserId)
       .eq("project_id", projectId)
       .single();
 
@@ -77,7 +77,7 @@ async function getOrCreateConversation(params: {
   const { data, error } = await supabase
     .from("conversations")
     .insert({
-      user_id: userId,
+      user_id: authedUserId,
       project_id: projectId,
       title: null,
     })
@@ -90,14 +90,14 @@ async function getOrCreateConversation(params: {
 
 async function loadRecentMessages(
   supabase: any,
-  userId: string,
+  authedUserId: string,
   conversationId: string,
   limit = 30
 ): Promise<Msg[]> {
   const { data, error } = await supabase
     .from("messages")
     .select("role,content,created_at,deleted_at,expires_at")
-    .eq("user_id", userId)
+    .eq("user_id", authedUserId)
     .eq("conversation_id", conversationId)
     .is("deleted_at", null)
     .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`)
@@ -108,18 +108,18 @@ async function loadRecentMessages(
   return (data ?? []).map((m: any) => ({ role: m.role, content: m.content }));
 }
 
-async function cleanupExpiredMessagesBestEffort(supabase: any, userId: string) {
+async function cleanupExpiredMessagesBestEffort(supabase: any, authedUserId: string) {
   await supabase
     .from("messages")
     .delete()
-    .eq("user_id", userId)
+    .eq("user_id", authedUserId)
     .lt("expires_at", new Date().toISOString())
     .not("expires_at", "is", null);
 }
 
 export async function POST(req: Request) {
   try {
-    const { supabase, userId } = await requireUser(req);
+    const { supabase, authedUserId } = await requireUser(req);
     const parsed = Body.safeParse(await req.json().catch(() => ({})));
 
     if (!parsed.success) {
@@ -127,43 +127,43 @@ export async function POST(req: Request) {
     }
 
     const { projectId: maybeProjectId, conversationId, userText } = parsed.data;
-    await cleanupExpiredMessagesBestEffort(supabase, userId);
+    await cleanupExpiredMessagesBestEffort(supabase, authedUserId);
 
     // 1) Resolve project
-    const projectId = maybeProjectId ?? (await getOrCreateDefaultProjectId(supabase, userId));
+    const projectId = maybeProjectId ?? (await getOrCreateDefaultProjectId(supabase, authedUserId));
 
     // 2) Ensure project exists
     const { data: project, error: pErr } = await supabase
       .from("projects")
       .select("id, persona_id, framework_version")
       .eq("id", projectId)
-      .eq("user_id", userId)
+      .eq("user_id", authedUserId)
       .single();
     if (pErr) {
       return NextResponse.json({ ok: false, error: "Project not found" }, { status: 404 });
     }
 
     // 3) Get or create conversation safely
-    const convoId = await getOrCreateConversation({ supabase, userId, projectId, conversationId });
+    const convoId = await getOrCreateConversation({ supabase, authedUserId, projectId, conversationId });
 
     // 4) Save user message
     await supabase.from("messages").insert({
       project_id: projectId,
       conversation_id: convoId,
-      user_id: userId,
+      user_id: authedUserId,
       role: "user",
       content: userText,
     });
 
     // 5) Build system prompt
     const systemPrompt = await buildPromptContext({
-      authedUserId: userId,
+      authedUserId: authedUserId,
       projectId,
       conversationId: convoId,
       latestUserText: userText,
     });
 
-    const history = await loadRecentMessages(supabase, userId, convoId, 30);
+    const history = await loadRecentMessages(supabase, authedUserId, convoId, 30);
     const messagesForModel: Msg[] = [{ role: "system", content: systemPrompt }, ...history];
 
     // 6) Generate AI response
@@ -175,7 +175,7 @@ export async function POST(req: Request) {
 
     // 7) Safety filter
     const postcheck = await postcheckResponse({
-      authedUserId: userId,
+      authedUserId: authedUserId,
       projectId,
       assistantText,
     });
@@ -190,15 +190,15 @@ export async function POST(req: Request) {
     await supabase.from("messages").insert({
       project_id: projectId,
       conversation_id: convoId,
-      user_id: userId,
+      user_id: authedUserId,
       role: "assistant",
       content: assistantText,
     });
 
     // 9) Memory extraction & reinforcement
     const extracted = await extractMemoryFromText({ userText, assistantText });
-    await upsertMemoryItems(userId, extracted, projectId);
-    await reinforceMemoryUse(userId, [], projectId);
+    await upsertMemoryItems(authedUserId, extracted, projectId);
+    await reinforceMemoryUse(authedUserId, [], projectId);
 
     // ✅ Fix: use actual conversation UUID instead of string
     await updateMemoryStrength(convoId, 0.2);
@@ -208,10 +208,10 @@ export async function POST(req: Request) {
       .from("conversations")
       .update({ updated_at: new Date().toISOString() })
       .eq("id", convoId)
-      .eq("user_id", userId);
+      .eq("user_id", authedUserId);
 
     // 11) Log event
-    await logMemoryEvent("chat_completed", { userId, projectId });
+    await logMemoryEvent("chat_completed", { authedUserId, projectId });
 
     return NextResponse.json({
       ok: true,
