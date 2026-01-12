@@ -16,20 +16,16 @@ export async function POST(req: Request) {
   try {
     event = stripe.webhooks.constructEvent(rawBody, sig, process.env.STRIPE_WEBHOOK_SECRET!);
   } catch (err: any) {
-    return NextResponse.json(
-      { error: `Webhook signature verification failed: ${err?.message}` },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: `Webhook signature verification failed: ${err.message}` }, { status: 400 });
   }
 
   const db = supabaseAdmin();
 
   if (event.type === "checkout.session.completed") {
     const session = event.data.object as Stripe.Checkout.Session;
-
     const authedUserId =
       (typeof session.client_reference_id === "string" && session.client_reference_id) ||
-      (typeof session.metadata?.userId === "string" && session.metadata.userId) ||
+      (typeof session.metadata?.authedUserId === "string" && session.metadata.authedUserId) ||
       null;
 
     const customerId =
@@ -45,17 +41,12 @@ export async function POST(req: Request) {
         updated_at: new Date().toISOString(),
       });
     }
-
     return NextResponse.json({ received: true });
   }
 
-  if (
-    event.type === "customer.subscription.updated" ||
-    event.type === "customer.subscription.deleted"
-  ) {
+  if (["customer.subscription.updated", "customer.subscription.deleted"].includes(event.type)) {
     const sub = event.data.object as Stripe.Subscription;
     const customerId = sub.customer as string;
-
     const currentPeriodEnd = (sub as any).current_period_end as number | undefined;
 
     await db

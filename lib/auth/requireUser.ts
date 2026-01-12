@@ -1,29 +1,24 @@
-import type { SupabaseClient } from "@supabase/supabase-js";
-import { supabaseFromAuthHeader } from "@/lib/supabaseFromAuthHeader";
 import { createClient } from "@supabase/supabase-js";
 
-const claimCache = new Map<string, { userId: string; exp: number }>();
-const CACHE_TTL = 60_000; // 60s
+const claimCache = new Map<string, { authedUserId: string; exp: number }>();
+const CACHE_TTL = 60_000; // 60 s
 
 export async function requireUser(req: Request) {
   const authHeader = req.headers.get("authorization");
-  if (!authHeader) throw new Error("Missing Authorization header");
+  if (!authHeader?.startsWith("Bearer ")) throw new Error("Missing or invalid Authorization header");
   const token = authHeader.replace("Bearer ", "");
 
   const cached = claimCache.get(token);
   if (cached && Date.now() < cached.exp) {
-    return { userId: cached.userId, supabase: getSupabaseClient(token) };
+    return { authedUserId: cached.authedUserId, supabase: getSupabaseClient(token) };
   }
 
   const supabase = getSupabaseClient(token);
-  const {
-    data: { user },
-    error,
-  } = await supabase.auth.getUser();
-  if (error || !user) throw new Error("Invalid or expired token");
+  const { data, error } = await supabase.auth.getUser();
+  if (error || !data?.user) throw new Error("Invalid or expired token");
 
-  claimCache.set(token, { userId: user.id, exp: Date.now() + CACHE_TTL });
-  return { userId: user.id, supabase };
+  claimCache.set(token, { authedUserId: data.user.id, exp: Date.now() + CACHE_TTL });
+  return { authedUserId: data.user.id, supabase };
 }
 
 function getSupabaseClient(token: string) {
@@ -35,6 +30,6 @@ function getSupabaseClient(token: string) {
 }
 
 export async function requireUserId(req: Request): Promise<string> {
-  const { userId } = await requireUser(req);
-  return userId;
+  const { authedUserId } = await requireUser(req);
+  return authedUserId;
 }
