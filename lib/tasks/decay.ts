@@ -1,14 +1,14 @@
 import { supabaseAdmin } from "@/lib/supabase/admin";
-import { logMemoryEvent } from "@/lib/memory/logger";
+import { logMemoryEvent } from "@firefly/shared/lib/safety/postcheck";
 import { applyIncrementalDecay } from "@/lib/memory/decayHelpers";
 
-export async function runMemoryDecay(userId: string) {
+export async function runMemoryDecay(authedUserId: string) {
   const client = supabaseAdmin();
 
   const { data: memories, error } = await client
     .from("memory_items")
     .select("id, strength, last_reinforced_at")
-    .eq("user_id", userId)
+    .eq("user_id", authedUserId)
     .limit(500);
 
   if (error) throw error;
@@ -29,5 +29,5 @@ export async function runMemoryDecay(userId: string) {
       .eq("id", op.id);
   }
 
-  await logMemoryEvent("decay_cycle", { userId, decayed: decayOps.length });
+  await logMemoryEvent("decay_cycle", { authedUserId, decayed: decayOps.length });
 }

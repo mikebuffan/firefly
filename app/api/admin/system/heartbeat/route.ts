@@ -50,8 +50,8 @@ export async function POST() {
       const batch = users.slice(i, i + chunkSize);
 
       for (const u of batch) {
-        await enqueueJob("decay", { userId: u.id });
-        await enqueueJob("reflection", { userId: u.id, projectId: u.project_id });
+        await enqueueJob("decay", { authedUserId: u.id });
+        await enqueueJob("reflection", { authedUserId: u.id, projectId: u.project_id });
       }
 
       await new Promise((r) => setTimeout(r, 500));

@@ -1,4 +1,4 @@
-import { openai } from "@/lib/providers/openai";
+import { openai } from "@firefly/shared/lib/providers/openai";
 
 const EMBED_MODEL = "text-embedding-3-small"; // 1536 dims
 

@@ -1,28 +1,17 @@
 import { NextResponse } from "next/server";
-import { z } from "zod";
-import { requireUser } from "@/lib/auth/requireUser";
-import { openAIChat } from "@/lib/providers/openai";
-import { buildPromptContext } from "@/lib/prompt/buildPromptContext";
-import { extractMemoryFromText } from "@/lib/memory/extractor";
-import { upsertMemoryItems, reinforceMemoryUse, updateMemoryStrength } from "@/lib/memory/store";
-import { postcheckResponse } from "@/lib/safety/postcheck";
-import { logMemoryEvent } from "@/lib/memory/logger";
+import { requireUser } from "@firefly/shared/lib/auth/requireUser";
+import { openAIChat } from "@firefly/shared/lib/providers/openai";
+import { buildPromptContext } from "@firefly/shared/lib/prompt/buildPromptContext";
+import { extractMemoryFromText } from "@firefly/shared/lib/memory/extractor";
+import { upsertMemoryItems, reinforceMemoryUse, updateMemoryStrength } from "@firefly/shared/lib/memory/store";
+import { postcheckResponse } from "@firefly/shared/lib/safety/postcheck";
+import { logMemoryEvent } from "@firefly/shared/lib/safety/postcheck";
+import { ChatRequestSchema } from "@firefly/contracts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type Msg = { role: "user" | "assistant" | "system"; content: string };
-
-const NullableUuid = z.preprocess(
-  (v) => (v === null || v === "" ? undefined : v),
-  z.string().uuid().optional()
-);
-
-const Body = z.object({
-  projectId: NullableUuid,
-  conversationId: NullableUuid,
-  userText: z.string().min(1),
-});
 
 async function getOrCreateDefaultProjectId(supabase: any, authedUserId: string): Promise<string> {
   const { data: existing, error: e1 } = await supabase
@@ -58,7 +47,6 @@ async function getOrCreateConversation(params: {
 }) {
   const { supabase, authedUserId, projectId, conversationId } = params;
 
-  // ✅ Defensive check: only use valid UUIDs
   const isUuid = conversationId && /^[0-9a-fA-F-]{36}$/.test(conversationId);
 
   if (isUuid) {
@@ -73,7 +61,6 @@ async function getOrCreateConversation(params: {
     if (!error && data?.id) return data.id as string;
   }
 
-  // Otherwise create new
   const { data, error } = await supabase
     .from("conversations")
     .insert({
@@ -120,33 +107,32 @@ async function cleanupExpiredMessagesBestEffort(supabase: any, authedUserId: str
 export async function POST(req: Request) {
   try {
     const { supabase, authedUserId } = await requireUser(req);
-    const parsed = Body.safeParse(await req.json().catch(() => ({})));
 
+    const raw = await req.json().catch(() => ({}));
+    const parsed = ChatRequestSchema.safeParse(raw);
     if (!parsed.success) {
       return NextResponse.json({ ok: false, error: parsed.error.flatten() }, { status: 400 });
     }
 
     const { projectId: maybeProjectId, conversationId, userText } = parsed.data;
+
     await cleanupExpiredMessagesBestEffort(supabase, authedUserId);
 
-    // 1) Resolve project
     const projectId = maybeProjectId ?? (await getOrCreateDefaultProjectId(supabase, authedUserId));
 
-    // 2) Ensure project exists
     const { data: project, error: pErr } = await supabase
       .from("projects")
       .select("id, persona_id, framework_version")
       .eq("id", projectId)
       .eq("user_id", authedUserId)
       .single();
+
     if (pErr) {
       return NextResponse.json({ ok: false, error: "Project not found" }, { status: 404 });
     }
 
-    // 3) Get or create conversation safely
     const convoId = await getOrCreateConversation({ supabase, authedUserId, projectId, conversationId });
 
-    // 4) Save user message
     await supabase.from("messages").insert({
       project_id: projectId,
       conversation_id: convoId,
@@ -155,9 +141,8 @@ export async function POST(req: Request) {
       content: userText,
     });
 
-    // 5) Build system prompt
     const systemPrompt = await buildPromptContext({
-      authedUserId: authedUserId,
+      authedUserId,
       projectId,
       conversationId: convoId,
       latestUserText: userText,
@@ -166,27 +151,26 @@ export async function POST(req: Request) {
     const history = await loadRecentMessages(supabase, authedUserId, convoId, 30);
     const messagesForModel: Msg[] = [{ role: "system", content: systemPrompt }, ...history];
 
-    // 6) Generate AI response
     const aiResponse = await openAIChat({
       model: process.env.OPENAI_CHAT_MODEL ?? "gpt-5",
       messages: messagesForModel,
     });
+
     const assistantText = (aiResponse as any)?.choices?.[0]?.message?.content ?? "";
 
-    // 7) Safety filter
     const postcheck = await postcheckResponse({
-      authedUserId: authedUserId,
+      authedUserId,
       projectId,
       assistantText,
     });
+
     if (!postcheck.approved) {
       return NextResponse.json(
-        { ok: true, assistantText: postcheck.replacement, flagged: true },
+        { ok: true, assistantText: postcheck.replacement, flagged: true, projectId, conversationId: convoId },
         { status: 200 }
       );
     }
 
-    // 8) Save assistant message
     await supabase.from("messages").insert({
       project_id: projectId,
       conversation_id: convoId,
@@ -195,22 +179,17 @@ export async function POST(req: Request) {
       content: assistantText,
     });
 
-    // 9) Memory extraction & reinforcement
     const extracted = await extractMemoryFromText({ userText, assistantText });
     await upsertMemoryItems(authedUserId, extracted, projectId);
     await reinforceMemoryUse(authedUserId, [], projectId);
-
-    // ✅ Fix: use actual conversation UUID instead of string
     await updateMemoryStrength(convoId, 0.2);
 
-    // 10) Update conversation timestamp
     await supabase
       .from("conversations")
       .update({ updated_at: new Date().toISOString() })
       .eq("id", convoId)
       .eq("user_id", authedUserId);
 
-    // 11) Log event
     await logMemoryEvent("chat_completed", { authedUserId, projectId });
 
     return NextResponse.json({

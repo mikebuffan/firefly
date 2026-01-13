@@ -1,5 +1,5 @@
 import { classifyRisk } from "@/lib/safety/classifyRisk";
-import { logMemoryEvent } from "@/lib/memory/logger";
+import { logMemoryEvent } from "@firefly/shared/lib/safety/postcheck";
 
 /**
  * Checks final assistant responses for safety and alignment before storage.

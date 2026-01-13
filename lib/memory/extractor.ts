@@ -1,8 +1,8 @@
 import { z } from "zod";
-import { openai } from "@/lib/providers/openai";
+import { openai } from "@firefly/shared/lib/providers/openai";
 import { SENSITIVE_CATEGORIES } from "@/lib/memory/rules";
 import type { MemoryItem } from "@/lib/memory/types";
-import { logMemoryEvent } from "@/lib/memory/logger";
+import { logMemoryEvent } from "@firefly/shared/lib/safety/postcheck";
 
 // Accept string/number/bool/object/null, then normalize to a record
 const ValueSchema = z.union([

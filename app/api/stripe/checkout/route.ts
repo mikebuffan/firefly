@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import Stripe from "stripe";
-import { requireUser } from "@/lib/auth/requireUser";
+import { requireUser } from "@firefly/shared/lib/auth/requireUser";
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
 

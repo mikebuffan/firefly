@@ -2,7 +2,7 @@ import { runMemoryDecay } from "@/lib/tasks/decay";
 import { runReflectionJob } from "@/lib/tasks/reflection";
 import { runMemorySync } from "@/lib/tasks/sync";
 import { supabaseAdmin } from "@/lib/supabase/admin";
-import { logMemoryEvent } from "@/lib/memory/logger";
+import { logMemoryEvent } from "@firefly/shared/lib/safety/postcheck";
 
 const LOCK_TABLE = "system_locks";
 const LOOP_INTERVAL_MS = 1000 * 60 * 10; // every 10 minutes

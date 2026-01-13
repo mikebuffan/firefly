@@ -25,7 +25,7 @@ export async function POST(req: NextRequest) {
   if (error || !data?.user) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
-  const userId = data.user.id;
+  const authedUserId = data.user.id;
 
   // 2) Validate body
   const parsed = BodySchema.safeParse(await req.json().catch(() => ({})));
@@ -40,7 +40,7 @@ export async function POST(req: NextRequest) {
   let pendingQuery = supabase
     .from("memory_pending")
     .select("*")
-    .eq("user_id", userId)
+    .eq("user_id", authedUserId)
     .order("created_at", { ascending: false })
     .limit(1);
 
@@ -71,7 +71,7 @@ export async function POST(req: NextRequest) {
     }));
 
     const admin = supabaseAdmin();
-    const svc = new MemoryService({ supabase, admin, userId, projectId });
+    const svc = new MemoryService({ supabase, admin, authedUserId, projectId });
 
     // IMPORTANT: call the service and capture ids
     appliedIds = await svc.applyOps(boosted);

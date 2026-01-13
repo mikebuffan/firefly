@@ -28,7 +28,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: parsed.error.flatten() }, { status: 400 });
   }
 
-  const userId = data.user.id;
+  const authedUserId = data.user.id;
   const projectId = parsed.data.projectId ?? null;
 
   const memKey = parsed.data.key.trim();
@@ -50,7 +50,7 @@ export async function POST(req: Request) {
   const svc = new MemoryService({
     supabase,
     admin,
-    userId,
+    authedUserId,
     projectId,
   });
 

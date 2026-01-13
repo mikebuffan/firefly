@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { generateWithOpenAI } from "@/lib/providers/openai";
+import { generateWithOpenAI } from "@firefly/shared/lib/providers/openai";
 
 export async function GET() {
   const text = await generateWithOpenAI([

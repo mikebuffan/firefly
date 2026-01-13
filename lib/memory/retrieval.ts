@@ -4,7 +4,7 @@
 // - Adds retry protection via safeQuery for vector RPC calls.
 
 import { supabaseAdmin, safeQuery } from "@/lib/supabase/admin";
-import { openAIEmbed } from "@/lib/providers/openai";
+import { openAIEmbed } from "@firefly/shared/lib/providers/openai";
 
 const memoryCache = new Map<string, any>();
 const CACHE_TTL = 1000 * 60 * 3;

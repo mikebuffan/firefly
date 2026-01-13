@@ -2,7 +2,7 @@ import { supabaseAdmin, safeQuery } from "@/lib/supabase/admin";
 import { LOCK_ON_CORRECTION_COUNT } from "@/lib/memory/rules";
 import type { MemoryItem, MemoryUpsertResult } from "@/lib/memory/types";
 import { embedText, memoryToEmbedString } from "@/lib/memory/embeddings";
-import { logMemoryEvent } from "@/lib/memory/logger";
+import { logMemoryEvent } from "@firefly/shared/lib/safety/postcheck";
 import { getServerSupabase } from "@/lib/supabase/server";
 
 const ITEMS_TABLE = "memory_items";

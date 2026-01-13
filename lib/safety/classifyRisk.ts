@@ -1,4 +1,4 @@
-import { openAIChat } from "@/lib/providers/openai";
+import { openAIChat } from "@firefly/shared/lib/providers/openai";
 
 export type RiskLevel = "none" | "low" | "medium" | "high";
 

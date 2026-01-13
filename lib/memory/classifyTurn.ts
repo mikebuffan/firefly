@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { MemoryMode } from "@/lib/memory/types";
-import { openai } from "@/lib/providers/openai";
+import { openai } from "@firefly/shared/lib/providers/openai";
 
 const TurnClassSchema = z.object({
   memory_mode: MemoryMode.default("recording"),

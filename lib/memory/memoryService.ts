@@ -25,7 +25,7 @@ export type MemoryItemRow = {
 export type MemoryDeps = {
   supabase: SupabaseClient;  // bearer (RLS reads)
   admin: SupabaseClient;     // service role writes when needed
-  userId: string;            // authed user
+  authedUserId: string;            // authed user
   projectId: string | null;  // scope
 };
 
@@ -33,7 +33,7 @@ export class MemoryService {
   constructor(private ctx: {
     supabase: any;
     admin: any;
-    userId: string;
+    authedUserId: string;
     projectId: string | null;
   }) {}
 
@@ -41,7 +41,7 @@ export class MemoryService {
     return this.ctx.admin
       .from("memory_items")
       .select("*")
-      .eq("user_id", this.ctx.userId)
+      .eq("user_id", this.ctx.authedUserId)
       .eq("project_id", this.ctx.projectId);
   }
 
@@ -71,7 +71,7 @@ export class MemoryService {
     const now = new Date().toISOString();
 
     const payload = {
-      user_id: this.ctx.userId,
+      user_id: this.ctx.authedUserId,
       project_id: this.ctx.projectId,
       mem_key: input.mem_key,
       mem_value: input.mem_value,
@@ -129,7 +129,7 @@ export class MemoryService {
               last_reinforced_at: now,
             })
             .eq("id", id)
-            .eq("user_id", this.ctx.userId)
+            .eq("user_id", this.ctx.authedUserId)
             .eq("project_id", this.ctx.projectId)
             .select("id")
             .single();
@@ -182,7 +182,7 @@ export class MemoryService {
       .from("memory_items")
       .update({ pinned, updated_at: new Date().toISOString() })
       .eq("id", id)
-      .eq("user_id", this.ctx.userId)
+      .eq("user_id", this.ctx.authedUserId)
       .eq("project_id", this.ctx.projectId)
       .select("*")
       .single();
@@ -195,7 +195,7 @@ export class MemoryService {
       .from("memory_items")
       .update({ discarded_at: new Date().toISOString(), updated_at: new Date().toISOString() })
       .eq("id", id)
-      .eq("user_id", this.ctx.userId)
+      .eq("user_id", this.ctx.authedUserId)
       .eq("project_id", this.ctx.projectId)
       .select("*")
       .single();
@@ -208,7 +208,7 @@ export class MemoryService {
       .from("memory_items")
       .update({ confirmed_at: new Date().toISOString(), updated_at: new Date().toISOString() })
       .eq("id", id)
-      .eq("user_id", this.ctx.userId)
+      .eq("user_id", this.ctx.authedUserId)
       .eq("project_id", this.ctx.projectId)
       .select("*")
       .single();

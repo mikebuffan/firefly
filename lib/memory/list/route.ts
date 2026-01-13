@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
-import { requireUser } from "@/lib/auth/requireUser";
+import { requireUser } from "@firefly/shared/lib/auth/requireUser";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 
 export async function GET(req: Request) {
-  const { userId: authedUserId } = await requireUser(req);
+  const { authedUserId: authedUserId } = await requireUser(req);
 
   const admin = supabaseAdmin();
   const { data, error } = await admin

@@ -26,7 +26,7 @@ export async function PATCH(
   const svc = new MemoryService({
     supabase,
     admin,
-    userId: data.user.id,
+    authedUserId: data.user.id,
     projectId,
   });
 

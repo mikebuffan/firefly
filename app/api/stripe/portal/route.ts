@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { stripe } from "@/lib/stripe";
-import { requireUserId } from "@/lib/auth/requireUser";
+import { requireUserId } from "@firefly/shared/lib/auth/requireUser";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 
 export const runtime = "nodejs";

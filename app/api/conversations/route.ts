@@ -13,12 +13,12 @@ async function requireUser(req: Request) {
   const supa = supabaseFromAuthHeader(req);
   const { data, error } = await supa.auth.getUser();
   if (error || !data?.user) throw new Error("Unauthorized");
-  return { supa, userId: data.user.id };
+  return { supa, authedUserId: data.user.id };
 }
 
 export async function POST(req: Request) {
   try {
-    const { supa, userId } = await requireUser(req);
+    const { supa, authedUserId } = await requireUser(req);
 
     const parsed = BodySchema.safeParse(await req.json().catch(() => ({})));
     if (!parsed.success) {
@@ -32,7 +32,7 @@ export async function POST(req: Request) {
       .from("projects")
       .select("id, persona_id, framework_version")
       .eq("id", projectId)
-      .eq("user_id", userId)
+      .eq("user_id", authedUserId)
       .single();
 
     if (pErr) {
@@ -45,7 +45,7 @@ export async function POST(req: Request) {
         .from("conversations")
         .select("id, project_id, user_id, created_at")
         .eq("id", conversationId)
-        .eq("user_id", userId)
+        .eq("user_id", authedUserId)
         .eq("project_id", projectId)
         .single();
 
@@ -64,7 +64,7 @@ export async function POST(req: Request) {
     const { data: created, error: insErr } = await supa
       .from("conversations")
       .insert({
-        user_id: userId,
+        user_id: authedUserId,
         project_id: projectId,
       })
       .select("id, project_id, user_id, created_at")

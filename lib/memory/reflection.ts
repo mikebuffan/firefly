@@ -1,12 +1,12 @@
 // lib/memory/reflection.ts
 import { supabaseAdmin } from "@/lib/supabase/admin";
-import { openAIChat, openAIEmbed } from "@/lib/providers/openai";
-import { logMemoryEvent } from "@/lib/memory/logger";
+import { openAIChat, openAIEmbed } from "@firefly/shared/lib/providers/openai";
+import { logMemoryEvent } from "@firefly/shared/lib/safety/postcheck";
 
 const ITEMS_TABLE = "memory_items";
 
 export async function reflectOnMemoryCluster(
-  userId: string,
+  authedUserId: string,
   projectId: string | null,
   recentKeys: string[]
 ) {
@@ -16,7 +16,7 @@ export async function reflectOnMemoryCluster(
     .from(ITEMS_TABLE)
     .select("mem_key, mem_value")
     .in("mem_key", recentKeys)
-    .eq("user_id", userId)
+    .eq("user_id", authedUserId)
     .limit(20);
 
   if (error) throw error;
@@ -52,7 +52,7 @@ Output as structured JSON:
   const embedding = await openAIEmbed(reflectionText);
 
   const { error: insertError } = await client.from("memory_reflections").insert({
-    user_id: userId,
+    user_id: authedUserId,
     project_id: projectId,
     summary: reflectionText,
     embedding,
@@ -61,7 +61,7 @@ Output as structured JSON:
   if (insertError) throw insertError;
 
   await logMemoryEvent("reflection_create", {
-    userId,
+    authedUserId,
     projectId,
     keys: recentKeys,
     length: reflectionText.length,

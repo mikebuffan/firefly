@@ -7,7 +7,7 @@ async function requireUserId(req: Request) {
   const supa = supabaseFromAuthHeader(req);
   const { data, error } = await supa.auth.getUser();
   if (error || !data?.user) throw new Error("Unauthorized");
-  return { supa, userId: data.user.id };
+  return { supa, authedUserId: data.user.id };
 }
 
 export async function POST(req: Request) {
@@ -18,7 +18,7 @@ export async function POST(req: Request) {
     const { data: existing, error: e1 } = await supa
       .from("projects")
       .select("id, user_id, name, persona_id, framework_version, created_at, updated_at")
-      .eq("user_id", userId)
+      .eq("user_id", authedUserId)
       .eq("name", "Default Project")
       .maybeSingle();
 
@@ -31,7 +31,7 @@ export async function POST(req: Request) {
     const { data: created, error: e2 } = await supa
       .from("projects")
       .insert({
-        user_id: userId,
+        user_id: authedUserId,
         name: "Default Project",
         persona_id: "arbor",
         framework_version: "v1",

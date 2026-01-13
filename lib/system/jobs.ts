@@ -50,13 +50,13 @@ export async function handleJob(job: any) {
         switch (job.type) {
           case "reflection": {
             const { runReflectionJob } = await import("@/lib/tasks/reflection");
-            await runReflectionJob(job.payload.userId, job.payload.projectId);
+            await runReflectionJob(job.payload.authedUserId, job.payload.projectId);
             break;
           }
 
           case "decay": {
             const { runMemoryDecay } = await import("@/lib/tasks/decay");
-            await runMemoryDecay(job.payload.userId);
+            await runMemoryDecay(job.payload.authedUserId);
             break;
           }
 

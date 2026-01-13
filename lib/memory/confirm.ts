@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { openai } from "@/lib/providers/openai";
+import { openai } from "@firefly/shared/lib/providers/openai";
 
 const ConfirmSchema = z.object({
   shouldAsk: z.boolean().default(false),

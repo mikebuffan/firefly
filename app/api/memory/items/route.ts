@@ -17,7 +17,7 @@ export async function GET(req: NextRequest) {
   const svc = new MemoryService({
     supabase,
     admin,
-    userId: data.user.id,
+    authedUserId: data.user.id,
     projectId: projectId ?? null,
   });
 
@@ -36,7 +36,7 @@ export async function POST(req: NextRequest) {
   const svc = new MemoryService({
     supabase,
     admin,
-    userId: data.user.id,
+    authedUserId: data.user.id,
     projectId: (body.projectId ?? null) as string | null,
   });
 
